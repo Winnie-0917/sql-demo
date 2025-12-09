@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS 系統</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>POS 收銀系統</h1>
+            <div class="header-actions">
+                <div id="userInfo" class="user-info" style="display: none;">
+                    <span class="user-name" id="userName"></span>
+                    <button class="btn btn-secondary" onclick="showProductModal()">管理商品</button>
+                    <button class="btn btn-secondary" onclick="showOrderHistory()">訂單記錄</button>
+                    <button class="btn btn-secondary" onclick="logout()">登出</button>
+                </div>
+                <div id="loginButtons" class="login-buttons">
+                    <button class="btn btn-primary" onclick="showLoginModal()">登入</button>
+                    <button class="btn btn-secondary" onclick="showRegisterModal()">註冊</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- 商品區域 -->
+            <section class="products-section">
+                <div class="section-header">
+                    <h2>商品列表</h2>
+                    <input type="text" id="searchInput" placeholder="搜尋商品..." class="search-input">
+                </div>
+                <div class="products-grid" id="productsGrid">
+                    <!-- 商品將動態載入 -->
+                </div>
+            </section>
+
+            <!-- 購物車區域 -->
+            <section class="cart-section">
+                <h2>購物車</h2>
+                <div class="cart-items" id="cartItems">
+                    <p class="empty-cart">購物車是空的</p>
+                </div>
+                <div class="cart-summary">
+                    <div class="summary-row">
+                        <span>小計:</span>
+                        <span id="subtotal">NT$ 0</span>
+                    </div>
+                    <div class="summary-row">
+                        <span>稅 (5%):</span>
+                        <span id="tax">NT$ 0</span>
+                    </div>
+                    <div class="summary-row total">
+                        <span>總計:</span>
+                        <span id="total">NT$ 0</span>
+                    </div>
+                    <button class="btn btn-primary btn-large" onclick="checkout()">結帳</button>
+                    <button class="btn btn-secondary btn-large" onclick="clearCart()">清空購物車</button>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- 商品管理模態框 -->
+    <div id="productModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeProductModal()">&times;</span>
+            <h2>商品管理</h2>
+            <form id="productForm">
+                <input type="hidden" id="productId">
+                <div class="form-group">
+                    <label>商品名稱:</label>
+                    <input type="text" id="productName" required>
+                </div>
+                <div class="form-group">
+                    <label>價格:</label>
+                    <input type="number" id="productPrice" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label>庫存:</label>
+                    <input type="number" id="productStock" required>
+                </div>
+                <div class="form-group">
+                    <label>描述:</label>
+                    <textarea id="productDescription"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">儲存</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeProductModal()">取消</button>
+                </div>
+            </form>
+            <div class="product-list">
+                <h3>現有商品</h3>
+                <div id="productList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 訂單記錄模態框 -->
+    <div id="orderModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeOrderModal()">&times;</span>
+            <h2>訂單記錄</h2>
+            <div id="orderHistory"></div>
+        </div>
+    </div>
+
+    <!-- 登入模態框 -->
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeLoginModal()">&times;</span>
+            <h2>登入</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>用戶名:</label>
+                    <input type="text" id="loginUsername" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label>密碼:</label>
+                    <input type="password" id="loginPassword" required autocomplete="current-password">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">登入</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeLoginModal()">取消</button>
+                </div>
+                <div class="form-footer">
+                    <p>還沒有帳號？ <a href="#" onclick="switchToRegister()">立即註冊</a></p>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 註冊模態框 -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeRegisterModal()">&times;</span>
+            <h2>註冊</h2>
+            <form id="registerForm">
+                <div class="form-group">
+                    <label>用戶名:</label>
+                    <input type="text" id="registerUsername" required autocomplete="username">
+                    <small>至少3個字符</small>
+                </div>
+                <div class="form-group">
+                    <label>姓名 (選填):</label>
+                    <input type="text" id="registerName" autocomplete="name">
+                </div>
+                <div class="form-group">
+                    <label>密碼:</label>
+                    <input type="password" id="registerPassword" required autocomplete="new-password">
+                    <small>至少6個字符</small>
+                </div>
+                <div class="form-group">
+                    <label>確認密碼:</label>
+                    <input type="password" id="registerPasswordConfirm" required autocomplete="new-password">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">註冊</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeRegisterModal()">取消</button>
+                </div>
+                <div class="form-footer">
+                    <p>已有帳號？ <a href="#" onclick="switchToLogin()">立即登入</a></p>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="index.js"></script>
+</body>
+</html>
+
