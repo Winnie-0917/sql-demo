@@ -15,6 +15,10 @@
                     <span class="user-name" id="userName"></span>
                     <button class="btn btn-secondary" onclick="showProductModal()">管理商品</button>
                     <button class="btn btn-secondary" onclick="showOrderHistory()">訂單記錄</button>
+                    <button class="btn btn-secondary" onclick="showProfileModal()">帳號設定</button>
+                    <div id="adminButtons" style="display: none;">
+                        <button class="btn btn-primary" onclick="showAdminStats()">管理員統計</button>
+                    </div>
                     <button class="btn btn-secondary" onclick="logout()">登出</button>
                 </div>
                 <div id="loginButtons" class="login-buttons">
@@ -161,6 +165,117 @@
                 </div>
                 <div class="form-footer">
                     <p>已有帳號？ <a href="#" onclick="switchToLogin()">立即登入</a></p>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 管理員統計模態框 -->
+    <div id="adminStatsModal" class="modal">
+        <div class="modal-content large-modal">
+            <span class="close" onclick="closeAdminStatsModal()">&times;</span>
+            <h2>管理員統計</h2>
+            
+            <div class="admin-tabs">
+                <button class="tab-btn active" onclick="switchAdminTab('employee-sales', this)">員工銷售數量</button>
+                <button class="tab-btn" onclick="switchAdminTab('daily-products', this)">當日產品銷售</button>
+                <button class="tab-btn" onclick="switchAdminTab('employee-average', this)">員工平均銷售</button>
+            </div>
+
+            <!-- 員工銷售數量 -->
+            <div id="employee-sales-tab" class="admin-tab-content active">
+                <h3>各位員工銷售數量</h3>
+                <div class="stats-table-container">
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>員工姓名</th>
+                                <th>用戶名</th>
+                                <th>銷售總額</th>
+                                <th>銷售商品數</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employeeSalesTable">
+                            <tr><td colspan="4" style="text-align: center; padding: 20px;">載入中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 當日產品銷售 -->
+            <div id="daily-products-tab" class="admin-tab-content">
+                <h3>當日產品銷售數量</h3>
+                <div class="stats-table-container">
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>產品名稱</th>
+                                <th>單價</th>
+                                <th>銷售數量</th>
+                                <th>銷售總額</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dailyProductsTable">
+                            <tr><td colspan="4" style="text-align: center; padding: 20px;">載入中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 員工平均銷售 -->
+            <div id="employee-average-tab" class="admin-tab-content">
+                <h3>每位員工銷售平均數量</h3>
+                <div class="stats-table-container">
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>員工姓名</th>
+                                <th>用戶名</th>
+                                <th>訂單數量</th>
+                                <th>平均訂單金額</th>
+                                <th>平均每單商品數</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employeeAverageTable">
+                            <tr><td colspan="5" style="text-align: center; padding: 20px;">載入中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 帳號設定模態框 -->
+    <div id="profileModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeProfileModal()">&times;</span>
+            <h2>帳號設定</h2>
+            <form id="profileForm">
+                <div class="form-group">
+                    <label>用戶名:</label>
+                    <input type="text" id="profileUsername" required autocomplete="username">
+                    <small>至少3個字符</small>
+                </div>
+                <div class="form-group">
+                    <label>姓名:</label>
+                    <input type="text" id="profileName" autocomplete="name">
+                </div>
+                <div class="form-group">
+                    <label>新密碼 (選填，留空則不更改):</label>
+                    <input type="password" id="profileNewPassword" autocomplete="new-password">
+                    <small>至少6個字符，留空則不更改密碼</small>
+                </div>
+                <div class="form-group">
+                    <label>確認新密碼:</label>
+                    <input type="password" id="profileConfirmPassword" autocomplete="new-password">
+                </div>
+                <div class="form-group" id="oldPasswordGroup" style="display: none;">
+                    <label>舊密碼 (更改密碼時必填):</label>
+                    <input type="password" id="profileOldPassword" autocomplete="current-password">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">儲存變更</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeProfileModal()">取消</button>
                 </div>
             </form>
         </div>

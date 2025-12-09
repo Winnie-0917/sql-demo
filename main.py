@@ -235,6 +235,11 @@ def check_login():
     """檢查用戶是否已登入"""
     return 'user_id' in session
 
+# 工具函數：檢查管理員權限
+def check_admin():
+    """檢查用戶是否為管理員"""
+    return check_login() and session.get('role') == 'admin'
+
 # API路由 - 用戶認證
 
 @app.route('/api/auth/register', methods=['POST'])
@@ -369,6 +374,115 @@ def auth_status():
         })
     else:
         return jsonify({'logged_in': False})
+
+@app.route('/api/auth/profile', methods=['PUT'])
+def update_profile():
+    """更新用戶資料（用戶名、密碼、姓名）"""
+    if not check_login():
+        return jsonify({'error': '請先登入'}), 401
+    
+    data = request.json
+    if not data:
+        return jsonify({'error': '缺少資料'}), 400
+    
+    user_id = session.get('user_id')
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        cursor = connection.cursor()
+        
+        # 獲取當前用戶信息
+        cursor.execute("SELECT username, password FROM users WHERE id = %s", (user_id,))
+        current_user = cursor.fetchone()
+        if not current_user:
+            cursor.close()
+            connection.close()
+            return jsonify({'error': '用戶不存在'}), 404
+        
+        updates = []
+        params = []
+        
+        # 更新用戶名（如果提供）
+        if 'username' in data and data['username']:
+            new_username = data['username'].strip()
+            if len(new_username) < 3:
+                cursor.close()
+                connection.close()
+                return jsonify({'error': '用戶名至少需要3個字符'}), 400
+            
+            # 檢查新用戶名是否已被其他用戶使用
+            cursor.execute("SELECT id FROM users WHERE username = %s AND id != %s", (new_username, user_id))
+            if cursor.fetchone():
+                cursor.close()
+                connection.close()
+                return jsonify({'error': '用戶名已被使用'}), 400
+            
+            updates.append("username = %s")
+            params.append(new_username)
+        
+        # 更新密碼（如果提供）
+        if 'password' in data and data['password']:
+            new_password = data['password']
+            if len(new_password) < 6:
+                cursor.close()
+                connection.close()
+                return jsonify({'error': '密碼至少需要6個字符'}), 400
+            
+            # 驗證舊密碼（如果提供）
+            if 'old_password' in data and data['old_password']:
+                old_password_hash = hash_password(data['old_password'])
+                if current_user[1] != old_password_hash:
+                    cursor.close()
+                    connection.close()
+                    return jsonify({'error': '舊密碼錯誤'}), 400
+            
+            hashed_password = hash_password(new_password)
+            updates.append("password = %s")
+            params.append(hashed_password)
+        
+        # 更新姓名（如果提供）
+        if 'name' in data:
+            new_name = data['name'].strip() if data['name'] else None
+            updates.append("name = %s")
+            params.append(new_name)
+        
+        if not updates:
+            cursor.close()
+            connection.close()
+            return jsonify({'error': '沒有需要更新的資料'}), 400
+        
+        # 執行更新
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
+        cursor.execute(query, params)
+        connection.commit()
+        
+        # 獲取更新後的用戶信息
+        cursor.execute("SELECT id, username, name, role FROM users WHERE id = %s", (user_id,))
+        updated_user = cursor.fetchone()
+        
+        # 更新session
+        if 'username' in data and data['username']:
+            session['username'] = updated_user[1]
+        if 'name' in data:
+            session['name'] = updated_user[2] or updated_user[1]
+        
+        cursor.close()
+        connection.close()
+        
+        return jsonify({
+            'message': '資料更新成功',
+            'user': {
+                'id': updated_user[0],
+                'username': updated_user[1],
+                'name': updated_user[2] or updated_user[1],
+                'role': updated_user[3]
+            }
+        })
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
 
 # API路由 - 商品管理
 
@@ -661,6 +775,147 @@ def get_orders():
         cursor.close()
         connection.close()
         return jsonify(orders)
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
+
+# 管理員統計API
+
+@app.route('/api/admin/stats/employee-sales', methods=['GET'])
+def get_employee_sales():
+    """獲取各位員工銷售數量"""
+    if not check_admin():
+        return jsonify({'error': '需要管理員權限'}), 403
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        cursor = connection.cursor(dictionary=True)
+        
+        # 查詢每位員工的銷售數量（總金額和商品數量）
+        cursor.execute("""
+            SELECT 
+                u.id,
+                u.username,
+                u.name,
+                COALESCE(SUM(o.total), 0) as total_sales,
+                COALESCE(SUM(oi.quantity), 0) as total_items_sold
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            WHERE u.role = 'user'
+            GROUP BY u.id, u.username, u.name
+            ORDER BY total_sales DESC
+        """)
+        
+        results = cursor.fetchall()
+        
+        # 轉換數據類型
+        for result in results:
+            result['total_sales'] = float(result['total_sales'])
+            result['total_items_sold'] = int(result['total_items_sold'])
+        
+        cursor.close()
+        connection.close()
+        return jsonify(results)
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/stats/daily-product-sales', methods=['GET'])
+def get_daily_product_sales():
+    """獲取當日產品銷售數量"""
+    if not check_admin():
+        return jsonify({'error': '需要管理員權限'}), 403
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        cursor = connection.cursor(dictionary=True)
+        
+        # 查詢當日每種產品的銷售數量
+        cursor.execute("""
+            SELECT 
+                p.id,
+                p.name,
+                p.price,
+                COALESCE(SUM(oi.quantity), 0) as quantity_sold,
+                COALESCE(SUM(oi.quantity * oi.price), 0) as total_revenue
+            FROM products p
+            LEFT JOIN order_items oi ON p.id = oi.product_id
+            LEFT JOIN orders o ON oi.order_id = o.id
+            WHERE DATE(o.created_at) = CURDATE() OR o.created_at IS NULL
+            GROUP BY p.id, p.name, p.price
+            ORDER BY quantity_sold DESC
+        """)
+        
+        results = cursor.fetchall()
+        
+        # 轉換數據類型
+        for result in results:
+            result['price'] = float(result['price'])
+            result['quantity_sold'] = int(result['quantity_sold'])
+            result['total_revenue'] = float(result['total_revenue'])
+        
+        cursor.close()
+        connection.close()
+        return jsonify(results)
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/stats/employee-average', methods=['GET'])
+def get_employee_average():
+    """獲取每位員工銷售平均數量"""
+    if not check_admin():
+        return jsonify({'error': '需要管理員權限'}), 403
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        cursor = connection.cursor(dictionary=True)
+        
+        # 查詢每位員工的平均銷售數量（平均訂單金額、平均訂單商品數量）
+        cursor.execute("""
+            SELECT 
+                u.id,
+                u.username,
+                u.name,
+                COUNT(o.id) as order_count,
+                CASE 
+                    WHEN COUNT(o.id) > 0 THEN COALESCE(AVG(o.total), 0)
+                    ELSE 0
+                END as avg_order_amount,
+                CASE 
+                    WHEN COUNT(o.id) > 0 THEN COALESCE(AVG(order_item_count.item_count), 0)
+                    ELSE 0
+                END as avg_items_per_order
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            LEFT JOIN (
+                SELECT order_id, SUM(quantity) as item_count
+                FROM order_items
+                GROUP BY order_id
+            ) order_item_count ON o.id = order_item_count.order_id
+            WHERE u.role = 'user'
+            GROUP BY u.id, u.username, u.name
+            ORDER BY avg_order_amount DESC
+        """)
+        
+        results = cursor.fetchall()
+        
+        # 轉換數據類型
+        for result in results:
+            result['order_count'] = int(result['order_count'])
+            result['avg_order_amount'] = float(result['avg_order_amount'])
+            result['avg_items_per_order'] = float(result['avg_items_per_order'])
+        
+        cursor.close()
+        connection.close()
+        return jsonify(results)
     except Error as e:
         return jsonify({'error': str(e)}), 500
 

@@ -39,6 +39,26 @@ function setupEventListeners() {
     if (registerForm) {
         registerForm.addEventListener('submit', handleRegister);
     }
+
+    // 帳號設定表單提交
+    const profileForm = document.getElementById('profileForm');
+    if (profileForm) {
+        profileForm.addEventListener('submit', handleProfileUpdate);
+    }
+
+    // 監聽新密碼輸入，顯示/隱藏舊密碼欄位
+    const profileNewPassword = document.getElementById('profileNewPassword');
+    if (profileNewPassword) {
+        profileNewPassword.addEventListener('input', function() {
+            const oldPasswordGroup = document.getElementById('oldPasswordGroup');
+            if (oldPasswordGroup) {
+                oldPasswordGroup.style.display = this.value ? 'block' : 'none';
+                if (!this.value) {
+                    document.getElementById('profileOldPassword').value = '';
+                }
+            }
+        });
+    }
 }
 
 // 檢查登入狀態
@@ -73,11 +93,19 @@ function updateUIForLoggedIn() {
     const userInfo = document.getElementById('userInfo');
     const loginButtons = document.getElementById('loginButtons');
     const userName = document.getElementById('userName');
+    const adminButtons = document.getElementById('adminButtons');
     
     if (userInfo && loginButtons && userName) {
         userInfo.style.display = 'flex';
         loginButtons.style.display = 'none';
         userName.textContent = `歡迎, ${currentUser.name || currentUser.username}`;
+        
+        // 如果是管理員，顯示管理員按鈕
+        if (adminButtons && currentUser && currentUser.role === 'admin') {
+            adminButtons.style.display = 'inline-block';
+        } else if (adminButtons) {
+            adminButtons.style.display = 'none';
+        }
     }
 }
 
@@ -257,6 +285,113 @@ async function logout() {
     } catch (error) {
         console.error('登出錯誤:', error);
         alert('登出時發生錯誤');
+    }
+}
+
+// 顯示帳號設定模態框
+function showProfileModal() {
+    if (!currentUser) {
+        alert('請先登入');
+        return;
+    }
+    
+    const modal = document.getElementById('profileModal');
+    if (modal) {
+        // 載入當前用戶信息
+        document.getElementById('profileUsername').value = currentUser.username || '';
+        document.getElementById('profileName').value = currentUser.name || '';
+        document.getElementById('profileNewPassword').value = '';
+        document.getElementById('profileConfirmPassword').value = '';
+        document.getElementById('profileOldPassword').value = '';
+        document.getElementById('oldPasswordGroup').style.display = 'none';
+        
+        modal.style.display = 'block';
+    }
+}
+
+// 關閉帳號設定模態框
+function closeProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.getElementById('profileForm').reset();
+    }
+}
+
+// 處理帳號設定更新
+async function handleProfileUpdate(e) {
+    e.preventDefault();
+    
+    if (!currentUser) {
+        alert('請先登入');
+        return;
+    }
+    
+    const username = document.getElementById('profileUsername').value.trim();
+    const name = document.getElementById('profileName').value.trim();
+    const newPassword = document.getElementById('profileNewPassword').value;
+    const confirmPassword = document.getElementById('profileConfirmPassword').value;
+    const oldPassword = document.getElementById('profileOldPassword').value;
+    
+    // 驗證用戶名
+    if (!username || username.length < 3) {
+        alert('用戶名至少需要3個字符');
+        return;
+    }
+    
+    // 如果提供了新密碼，驗證密碼
+    if (newPassword) {
+        if (newPassword.length < 6) {
+            alert('密碼至少需要6個字符');
+            return;
+        }
+        
+        if (newPassword !== confirmPassword) {
+            alert('兩次輸入的新密碼不一致');
+            return;
+        }
+        
+        if (!oldPassword) {
+            alert('更改密碼時需要輸入舊密碼');
+            return;
+        }
+    }
+    
+    try {
+        const updateData = {
+            username: username,
+            name: name || null
+        };
+        
+        // 如果提供了新密碼，添加到更新數據中
+        if (newPassword) {
+            updateData.password = newPassword;
+            updateData.old_password = oldPassword;
+        }
+        
+        const response = await fetch(`${API_BASE_URL}/auth/profile`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include',
+            body: JSON.stringify(updateData)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // 更新當前用戶信息
+            currentUser = data.user;
+            updateUIForLoggedIn();
+            closeProfileModal();
+            alert('資料更新成功！');
+        } else {
+            alert(`更新失敗: ${data.error || '未知錯誤'}`);
+        }
+    } catch (error) {
+        console.error('更新資料錯誤:', error);
+        alert('更新資料時發生錯誤，請稍後再試');
     }
 }
 
@@ -715,12 +850,182 @@ function showError(message) {
     alert(message);
 }
 
+// 管理員統計功能
+
+// 顯示管理員統計模態框
+function showAdminStats() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        alert('需要管理員權限');
+        return;
+    }
+    
+    const modal = document.getElementById('adminStatsModal');
+    if (modal) {
+        modal.style.display = 'block';
+        // 找到第一個按鈕並激活
+        const firstButton = document.querySelector('.admin-tabs .tab-btn');
+        switchAdminTab('employee-sales', firstButton); // 默認顯示第一個標籤
+    }
+}
+
+// 關閉管理員統計模態框
+function closeAdminStatsModal() {
+    const modal = document.getElementById('adminStatsModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// 切換管理員統計標籤
+function switchAdminTab(tabName, buttonElement) {
+    // 隱藏所有標籤內容
+    document.querySelectorAll('.admin-tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // 移除所有按鈕的active類
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // 顯示選中的標籤內容
+    const selectedTab = document.getElementById(`${tabName}-tab`);
+    if (selectedTab) {
+        selectedTab.classList.add('active');
+    }
+    
+    // 添加按鈕的active類
+    if (buttonElement) {
+        buttonElement.classList.add('active');
+    }
+    
+    // 載入對應的數據
+    if (tabName === 'employee-sales') {
+        loadEmployeeSales();
+    } else if (tabName === 'daily-products') {
+        loadDailyProductSales();
+    } else if (tabName === 'employee-average') {
+        loadEmployeeAverage();
+    }
+}
+
+// 載入員工銷售數量
+async function loadEmployeeSales() {
+    const tableBody = document.getElementById('employeeSalesTable');
+    if (!tableBody) return;
+    
+    tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px;">載入中...</td></tr>';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/stats/employee-sales`, {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px; color: #999;">尚無員工銷售記錄</td></tr>';
+            } else {
+                tableBody.innerHTML = data.map(employee => `
+                    <tr>
+                        <td>${escapeHtml(employee.name || employee.username)}</td>
+                        <td>${escapeHtml(employee.username)}</td>
+                        <td>NT$ ${employee.total_sales.toFixed(2)}</td>
+                        <td>${employee.total_items_sold}</td>
+                    </tr>
+                `).join('');
+            }
+        } else {
+            const error = await response.json().catch(() => ({ error: '未知錯誤' }));
+            tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; padding: 20px; color: #e74c3c;">載入失敗: ${error.error || '未知錯誤'}</td></tr>`;
+        }
+    } catch (error) {
+        console.error('載入員工銷售數據失敗:', error);
+        tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px; color: #e74c3c;">無法連接到伺服器</td></tr>';
+    }
+}
+
+// 載入當日產品銷售
+async function loadDailyProductSales() {
+    const tableBody = document.getElementById('dailyProductsTable');
+    if (!tableBody) return;
+    
+    tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px;">載入中...</td></tr>';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/stats/daily-product-sales`, {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px; color: #999;">今日尚無產品銷售記錄</td></tr>';
+            } else {
+                tableBody.innerHTML = data.map(product => `
+                    <tr>
+                        <td>${escapeHtml(product.name)}</td>
+                        <td>NT$ ${product.price.toFixed(2)}</td>
+                        <td>${product.quantity_sold}</td>
+                        <td>NT$ ${product.total_revenue.toFixed(2)}</td>
+                    </tr>
+                `).join('');
+            }
+        } else {
+            const error = await response.json().catch(() => ({ error: '未知錯誤' }));
+            tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; padding: 20px; color: #e74c3c;">載入失敗: ${error.error || '未知錯誤'}</td></tr>`;
+        }
+    } catch (error) {
+        console.error('載入當日產品銷售數據失敗:', error);
+        tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px; color: #e74c3c;">無法連接到伺服器</td></tr>';
+    }
+}
+
+// 載入員工平均銷售
+async function loadEmployeeAverage() {
+    const tableBody = document.getElementById('employeeAverageTable');
+    if (!tableBody) return;
+    
+    tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">載入中...</td></tr>';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/stats/employee-average`, {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #999;">尚無員工銷售記錄</td></tr>';
+            } else {
+                tableBody.innerHTML = data.map(employee => `
+                    <tr>
+                        <td>${escapeHtml(employee.name || employee.username)}</td>
+                        <td>${escapeHtml(employee.username)}</td>
+                        <td>${employee.order_count}</td>
+                        <td>NT$ ${employee.avg_order_amount.toFixed(2)}</td>
+                        <td>${employee.avg_items_per_order.toFixed(2)}</td>
+                    </tr>
+                `).join('');
+            }
+        } else {
+            const error = await response.json().catch(() => ({ error: '未知錯誤' }));
+            tableBody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 20px; color: #e74c3c;">載入失敗: ${error.error || '未知錯誤'}</td></tr>`;
+        }
+    } catch (error) {
+        console.error('載入員工平均銷售數據失敗:', error);
+        tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #e74c3c;">無法連接到伺服器</td></tr>';
+    }
+}
+
 // 點擊模態框外部關閉
 window.onclick = function(event) {
     const productModal = document.getElementById('productModal');
     const orderModal = document.getElementById('orderModal');
     const loginModal = document.getElementById('loginModal');
     const registerModal = document.getElementById('registerModal');
+    const adminStatsModal = document.getElementById('adminStatsModal');
+    const profileModal = document.getElementById('profileModal');
     
     if (event.target === productModal) {
         closeProductModal();
@@ -733,6 +1038,12 @@ window.onclick = function(event) {
     }
     if (event.target === registerModal) {
         closeRegisterModal();
+    }
+    if (event.target === adminStatsModal) {
+        closeAdminStatsModal();
+    }
+    if (event.target === profileModal) {
+        closeProfileModal();
     }
 }
 
