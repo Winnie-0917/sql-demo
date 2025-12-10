@@ -615,6 +615,8 @@ def delete_product(product_id):
         return jsonify({'error': '資料庫連接失敗'}), 500
     
     try:
+        # 設置為手動提交模式（禁用自動提交）
+        connection.autocommit = False
         cursor = connection.cursor()
         
         # 檢查商品是否存在
@@ -624,14 +626,24 @@ def delete_product(product_id):
             connection.close()
             return jsonify({'error': '商品不存在'}), 404
         
-        # 刪除商品
+        # 先刪除所有相關的訂單項目（因為外鍵約束）
+        cursor.execute("DELETE FROM order_items WHERE product_id = %s", (product_id,))
+        
+        # 然後刪除商品
         cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
+        
+        # 提交事務
         connection.commit()
         cursor.close()
         connection.close()
         
         return jsonify({'message': '商品刪除成功'})
     except Error as e:
+        # 如果發生錯誤，回滾事務
+        if connection:
+            connection.rollback()
+            cursor.close()
+            connection.close()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/orders', methods=['POST'])
@@ -651,10 +663,9 @@ def create_order():
         return jsonify({'error': '資料庫連接失敗'}), 500
     
     try:
+        # 設置為手動提交模式（禁用自動提交）
+        connection.autocommit = False
         cursor = connection.cursor()
-        
-        # 開始事務
-        connection.start_transaction()
         
         # 檢查庫存並更新
         for item in data['items']:
@@ -716,7 +727,11 @@ def create_order():
         
         return jsonify({'order_id': order_id, 'message': '訂單創建成功'}), 201
     except Error as e:
-        connection.rollback()
+        # 如果發生錯誤，回滾事務
+        if connection:
+            connection.rollback()
+            cursor.close()
+            connection.close()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/orders', methods=['GET'])
