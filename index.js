@@ -769,9 +769,29 @@ async function deleteProduct(productId) {
 
 // 顯示訂單記錄
 async function showOrderHistory() {
-    if (!currentUser) {
-        alert('請先登入才能查看訂單記錄');
-        showLoginModal();
+    // 先檢查登入狀態
+    try {
+        const statusResponse = await fetch(`${API_BASE_URL}/auth/status`, {
+            credentials: 'include'
+        });
+        
+        if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (!statusData.logged_in) {
+                alert('請先登入才能查看訂單記錄');
+                showLoginModal();
+                return;
+            }
+            // 更新 currentUser
+            currentUser = statusData.user;
+        } else {
+            alert('請先登入才能查看訂單記錄');
+            showLoginModal();
+            return;
+        }
+    } catch (error) {
+        console.error('檢查登入狀態失敗:', error);
+        alert('無法檢查登入狀態，請稍後再試');
         return;
     }
     
@@ -795,6 +815,9 @@ async function loadOrderHistory() {
     const orderHistory = document.getElementById('orderHistory');
     if (!orderHistory) return;
     
+    // 顯示載入中
+    orderHistory.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">載入中...</p>';
+    
     try {
         const response = await fetch(`${API_BASE_URL}/orders`, {
             credentials: 'include'
@@ -804,14 +827,19 @@ async function loadOrderHistory() {
             const orders = await response.json();
             displayOrderHistory(orders);
         } else if (response.status === 401) {
-            orderHistory.innerHTML = '<p style="text-align: center; color: #e74c3c;">請先登入才能查看訂單記錄</p>';
+            // 如果收到 401，關閉模態框並提示登入
+            closeOrderModal();
+            currentUser = null;
+            updateUIForLoggedOut();
+            alert('登入已過期，請重新登入');
+            showLoginModal();
         } else {
             const error = await response.json().catch(() => ({ error: '未知錯誤' }));
-            orderHistory.innerHTML = `<p style="text-align: center; color: #999;">無法載入訂單記錄: ${error.error || '未知錯誤'}</p>`;
+            orderHistory.innerHTML = `<p style="text-align: center; color: #e74c3c; padding: 20px;">無法載入訂單記錄: ${error.error || '未知錯誤'}</p>`;
         }
     } catch (error) {
         console.error('載入訂單記錄失敗:', error);
-        orderHistory.innerHTML = '<p style="text-align: center; color: #999;">無法連接到伺服器</p>';
+        orderHistory.innerHTML = '<p style="text-align: center; color: #e74c3c; padding: 20px;">無法連接到伺服器，請確認後端服務是否運行</p>';
     }
 }
 
@@ -831,11 +859,486 @@ function displayOrderHistory(orders) {
             <div class="order-details">日期: ${new Date(order.created_at).toLocaleString('zh-TW')}</div>
             <div class="order-details">商品數量: ${order.items.length} 項</div>
             <div class="order-details">
-                商品: ${order.items.map(item => `${item.name} × ${item.quantity}`).join(', ')}
+                商品: ${order.items.map(item => `${escapeHtml(item.name)} × ${item.quantity}`).join(', ')}
             </div>
             <div class="order-total">總計: NT$ ${parseFloat(order.total).toFixed(2)}</div>
+            <div class="order-actions" style="margin-top: 10px; display: flex; gap: 10px;">
+                <button class="btn btn-secondary" onclick="editOrder(${order.id})" style="padding: 5px 15px; font-size: 14px;">編輯</button>
+                <button class="btn btn-delete" onclick="deleteOrder(${order.id})" style="padding: 5px 15px; font-size: 14px; background-color: #e74c3c;">刪除</button>
+            </div>
         </div>
     `).join('');
+}
+
+// 刪除訂單
+async function deleteOrder(orderId) {
+    if (!confirm('確定要刪除這個訂單嗎？刪除後將恢復商品庫存。')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/orders/${orderId}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            alert('訂單刪除成功');
+            await loadOrderHistory(); // 重新載入訂單記錄
+            loadProducts(); // 重新載入商品以更新庫存顯示
+        } else {
+            const error = await response.json().catch(() => ({ error: '未知錯誤' }));
+            alert(`刪除失敗: ${error.error || '未知錯誤'}`);
+        }
+    } catch (error) {
+        console.error('刪除訂單錯誤:', error);
+        alert('刪除訂單時發生錯誤，請稍後再試');
+    }
+}
+
+// 編輯訂單
+async function editOrder(orderId) {
+    try {
+        // 獲取訂單詳情
+        const response = await fetch(`${API_BASE_URL}/orders`, {
+            credentials: 'include'
+        });
+        
+        if (!response.ok) {
+            alert('無法載入訂單資訊');
+            return;
+        }
+        
+        const orders = await response.json();
+        const order = orders.find(o => o.id === orderId);
+        
+        if (!order) {
+            alert('找不到訂單');
+            return;
+        }
+        
+        // 顯示編輯模態框
+        const modal = document.getElementById('editOrderModal');
+        if (modal) {
+            document.getElementById('editOrderId').value = order.id;
+            document.getElementById('editOrderNumber').value = `#${order.id}`;
+            document.getElementById('editOrderDate').value = new Date(order.created_at).toLocaleString('zh-TW');
+            
+            // 顯示訂單商品，允許編輯數量
+            const editOrderItems = document.getElementById('editOrderItems');
+            editOrderItems.innerHTML = order.items.map(item => {
+                // 獲取當前商品庫存（考慮已訂購的數量）
+                const product = products.find(p => p.id === item.product_id);
+                const currentStock = product ? product.stock : 0;
+                // 最大可訂購數量 = 當前庫存 + 原訂單中的數量（因為會先恢復庫存）
+                const maxQuantity = currentStock + item.quantity;
+                
+                return `
+                <div class="edit-order-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                    <div style="flex: 1;">
+                        <strong>${escapeHtml(item.name)}</strong>
+                        <div style="color: #666; font-size: 14px;">單價: NT$ ${item.price.toFixed(2)} | 可用庫存: ${maxQuantity}</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <label>數量:</label>
+                        <input type="number" 
+                               class="order-item-quantity" 
+                               data-product-id="${item.product_id}"
+                               data-price="${item.price}"
+                               data-max-stock="${maxQuantity}"
+                               value="${item.quantity}" 
+                               min="1"
+                               max="${maxQuantity}"
+                               style="width: 60px; padding: 5px;"
+                               onchange="validateOrderItemQuantity(this)">
+                    </div>
+                    <button type="button" 
+                            class="btn btn-delete" 
+                            onclick="removeOrderItem(this)"
+                            style="padding: 5px 10px; font-size: 12px; background-color: #e74c3c;">
+                        移除
+                    </button>
+                </div>
+            `;
+            }).join('');
+            
+            // 添加「添加商品」按鈕
+            const addButtonDiv = document.createElement('div');
+            addButtonDiv.style.marginTop = '15px';
+            const addProductBtn = document.createElement('button');
+            addProductBtn.type = 'button';
+            addProductBtn.className = 'btn btn-secondary';
+            addProductBtn.textContent = '添加商品';
+            addProductBtn.style.padding = '8px 15px';
+            addProductBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                addProductToOrder();
+            });
+            addButtonDiv.appendChild(addProductBtn);
+            editOrderItems.appendChild(addButtonDiv);
+            
+            modal.style.display = 'block';
+        }
+    } catch (error) {
+        console.error('載入訂單錯誤:', error);
+        alert('載入訂單時發生錯誤');
+    }
+}
+
+// 移除訂單項目（編輯時）
+function removeOrderItem(button) {
+    if (confirm('確定要移除此商品嗎？')) {
+        button.closest('.edit-order-item').remove();
+        updateEditOrderSummary();
+    }
+}
+
+// 添加商品到訂單（編輯時）
+async function addProductToOrder() {
+    try {
+        console.log('addProductToOrder 被調用');
+        console.log('當前 products:', products);
+        
+        // 檢查商品列表是否已載入
+        if (!products || products.length === 0) {
+            console.log('商品列表為空，嘗試載入...');
+            await loadProducts();
+            // 如果載入後還是空的，提示用戶
+            if (!products || products.length === 0) {
+                alert('目前沒有可用的商品');
+                return;
+            }
+            console.log('商品列表載入成功，共', products.length, '個商品');
+        }
+        
+        // 獲取訂單項目容器
+        const editOrderItemsContainer = document.getElementById('editOrderItems');
+        if (!editOrderItemsContainer) {
+            console.error('找不到 editOrderItems 元素');
+            alert('找不到訂單項目容器');
+            return;
+        }
+        console.log('找到訂單項目容器');
+        
+        // 獲取當前訂單中已有的商品ID
+        const existingProductIds = new Set();
+        const existingQuantityInputs = editOrderItemsContainer.querySelectorAll('.order-item-quantity');
+        existingQuantityInputs.forEach(input => {
+            const productId = parseInt(input.getAttribute('data-product-id'));
+            if (productId) {
+                existingProductIds.add(productId);
+            }
+        });
+        
+        // 過濾掉已經在訂單中的商品
+        const availableProducts = products.filter(p => !existingProductIds.has(p.id));
+        console.log('可用商品數量:', availableProducts.length, '總商品數:', products.length);
+        
+        if (availableProducts.length === 0) {
+            alert('所有商品都已添加到訂單中');
+            return;
+        }
+        
+        // 檢查是否已經有選擇器存在
+        const existingContainer = document.querySelector('#addProductContainer');
+        if (existingContainer) {
+            console.log('移除現有的選擇器');
+            existingContainer.remove();
+        }
+        
+        // 創建一個簡單的商品選擇器
+        const productSelect = document.createElement('select');
+        productSelect.id = 'productSelectForOrder';
+        productSelect.style.width = '200px';
+        productSelect.style.padding = '8px';
+        productSelect.style.marginRight = '10px';
+        
+        // 添加選項（只顯示未在訂單中的商品）
+        try {
+            productSelect.innerHTML = '<option value="">選擇商品...</option>' + 
+                availableProducts.map(p => {
+                    try {
+                        return `<option value="${p.id}" data-price="${p.price}">${escapeHtml(p.name)} - NT$ ${p.price.toFixed(2)} (庫存: ${p.stock})</option>`;
+                    } catch (e) {
+                        console.error('處理商品時出錯:', p, e);
+                        return '';
+                    }
+                }).filter(opt => opt !== '').join('');
+            console.log('商品選擇器創建成功');
+        } catch (e) {
+            console.error('創建商品選擇器選項時出錯:', e);
+            throw e;
+        }
+    
+    const quantityInput = document.createElement('input');
+    quantityInput.type = 'number';
+    quantityInput.min = '1';
+    quantityInput.value = '1';
+    quantityInput.style.width = '80px';
+    quantityInput.style.padding = '5px';
+    quantityInput.style.marginLeft = '10px';
+    
+    // 先創建容器，這樣在 onclick 函數中就可以訪問
+    const container = document.createElement('div');
+    container.id = 'addProductContainer';
+    container.style.cssText = 'display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 5px;';
+    
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'btn btn-primary';
+    addButton.textContent = '添加';
+    addButton.onclick = function() {
+        try {
+            const selectedOption = productSelect.options[productSelect.selectedIndex];
+            if (!selectedOption.value) {
+                alert('請選擇商品');
+                return;
+            }
+            
+            const productId = parseInt(selectedOption.value);
+            const price = parseFloat(selectedOption.dataset.price);
+            const quantity = parseInt(quantityInput.value);
+            
+            // 確保 products 已載入
+            if (!products || products.length === 0) {
+                alert('商品列表尚未載入，請稍候再試');
+                return;
+            }
+            
+            const product = products.find(p => p.id === productId);
+        
+        if (!product) {
+            alert('找不到商品');
+            return;
+        }
+        
+        if (quantity > product.stock) {
+            alert('庫存不足');
+            return;
+        }
+        
+        // 檢查數量是否有效
+        if (quantity < 1) {
+            alert('數量至少為 1');
+            return;
+        }
+        
+        // 添加新項目（因為已經過濾掉已存在的商品，所以直接添加）
+        const editOrderItemsContainer = document.getElementById('editOrderItems');
+        if (!editOrderItemsContainer) {
+            alert('找不到訂單項目容器');
+            return;
+        }
+        
+        const newItem = document.createElement('div');
+        newItem.className = 'edit-order-item';
+        newItem.style.cssText = 'display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;';
+        newItem.innerHTML = `
+            <div style="flex: 1;">
+                <strong>${escapeHtml(product.name)}</strong>
+                <div style="color: #666; font-size: 14px;">單價: NT$ ${price.toFixed(2)} | 可用庫存: ${product.stock}</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <label>數量:</label>
+                <input type="number" 
+                       class="order-item-quantity" 
+                       data-product-id="${productId}"
+                       data-price="${price}"
+                       value="${quantity}" 
+                       min="1"
+                       max="${product.stock}"
+                       data-max-stock="${product.stock}"
+                       style="width: 60px; padding: 5px;"
+                       onchange="validateOrderItemQuantity(this)">
+            </div>
+            <button type="button" 
+                    class="btn btn-delete" 
+                    onclick="removeOrderItem(this)"
+                    style="padding: 5px 10px; font-size: 12px; background-color: #e74c3c;">
+                移除
+            </button>
+        `;
+        
+        // 插入到「添加商品」按鈕之前
+        // 找到包含「添加商品」按鈕的 div（最後一個直接子元素）
+        const lastChild = editOrderItemsContainer.lastElementChild;
+        if (lastChild) {
+            // 檢查是否是最後一個子元素且包含「添加商品」按鈕
+            const addButton = lastChild.querySelector && lastChild.querySelector('button');
+            if (addButton && addButton.textContent.trim() === '添加商品') {
+                // 確保 lastChild 是 editOrderItemsContainer 的直接子節點
+                if (lastChild.parentNode === editOrderItemsContainer) {
+                    editOrderItemsContainer.insertBefore(newItem, lastChild);
+                } else {
+                    editOrderItemsContainer.appendChild(newItem);
+                }
+            } else {
+                editOrderItemsContainer.appendChild(newItem);
+            }
+        } else {
+            editOrderItemsContainer.appendChild(newItem);
+        }
+        updateEditOrderSummary();
+        
+        // 移除選擇器容器
+        if (container && container.parentNode) {
+            container.remove();
+        }
+        } catch (error) {
+            console.error('添加商品按鈕點擊時發生錯誤:', error);
+            alert('添加商品時發生錯誤: ' + (error.message || '未知錯誤'));
+        }
+    };
+    
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'btn btn-secondary';
+    cancelButton.textContent = '取消';
+    cancelButton.style.marginLeft = '10px';
+    cancelButton.onclick = function() {
+        if (container && container.parentNode) {
+            container.remove();
+        }
+    };
+    
+    // 將元素添加到容器
+    container.appendChild(productSelect);
+    container.appendChild(quantityInput);
+    container.appendChild(addButton);
+    container.appendChild(cancelButton);
+    
+    // 插入到「添加商品」按鈕之前
+    // 找到包含「添加商品」按鈕的 div（最後一個直接子元素）
+    const lastChild = editOrderItemsContainer.lastElementChild;
+    if (lastChild) {
+        // 檢查是否是最後一個子元素且包含「添加商品」按鈕
+        const addButton = lastChild.querySelector && lastChild.querySelector('button');
+        if (addButton && addButton.textContent.trim() === '添加商品') {
+            // 確保 lastChild 是 editOrderItemsContainer 的直接子節點
+            if (lastChild.parentNode === editOrderItemsContainer) {
+                editOrderItemsContainer.insertBefore(container, lastChild);
+            } else {
+                editOrderItemsContainer.appendChild(container);
+            }
+        } else {
+            editOrderItemsContainer.appendChild(container);
+        }
+    } else {
+        editOrderItemsContainer.appendChild(container);
+    }
+    } catch (error) {
+        console.error('添加商品到訂單時發生錯誤:', error);
+        console.error('錯誤堆棧:', error.stack);
+        console.error('錯誤詳情:', {
+            message: error.message,
+            name: error.name,
+            products: products,
+            editOrderItems: document.getElementById('editOrderItems')
+        });
+        alert('添加商品時發生錯誤: ' + (error.message || '未知錯誤') + '\n請查看控制台獲取詳細信息');
+    }
+}
+
+// 驗證訂單項目數量
+function validateOrderItemQuantity(input) {
+    const maxStock = parseInt(input.dataset.maxStock);
+    const value = parseInt(input.value);
+    
+    if (value < 1) {
+        input.value = 1;
+        alert('數量至少為 1');
+    } else if (value > maxStock) {
+        input.value = maxStock;
+        alert(`數量不能超過可用庫存 ${maxStock}`);
+    }
+}
+
+// 更新編輯訂單摘要
+function updateEditOrderSummary() {
+    // 這個函數可以在編輯訂單時顯示實時總計
+    // 目前先不實現，因為表單提交時會計算
+}
+
+// 關閉編輯訂單模態框
+function closeEditOrderModal() {
+    const modal = document.getElementById('editOrderModal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.getElementById('editOrderForm').reset();
+    }
+}
+
+// 處理編輯訂單表單提交
+document.addEventListener('DOMContentLoaded', () => {
+    const editOrderForm = document.getElementById('editOrderForm');
+    if (editOrderForm) {
+        editOrderForm.addEventListener('submit', handleEditOrderSubmit);
+    }
+});
+
+async function handleEditOrderSubmit(e) {
+    e.preventDefault();
+    
+    const orderId = document.getElementById('editOrderId').value;
+    if (!orderId) {
+        alert('訂單ID不存在');
+        return;
+    }
+    
+    // 收集訂單項目
+    const quantityInputs = document.querySelectorAll('.order-item-quantity');
+    const items = [];
+    
+    for (const input of quantityInputs) {
+        const productId = parseInt(input.dataset.productId);
+        const price = parseFloat(input.dataset.price);
+        const quantity = parseInt(input.value);
+        
+        if (quantity > 0) {
+            items.push({
+                product_id: productId,
+                quantity: quantity,
+                price: price
+            });
+        }
+    }
+    
+    if (items.length === 0) {
+        alert('訂單至少需要一個商品');
+        return;
+    }
+    
+    // 計算總額
+    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const tax = subtotal * 0.05;
+    const total = subtotal + tax;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/orders/${orderId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+                items: items,
+                subtotal: subtotal,
+                tax: tax,
+                total: total
+            })
+        });
+        
+        if (response.ok) {
+            alert('訂單更新成功');
+            closeEditOrderModal();
+            await loadOrderHistory(); // 重新載入訂單記錄
+            loadProducts(); // 重新載入商品以更新庫存顯示
+        } else {
+            const error = await response.json().catch(() => ({ error: '未知錯誤' }));
+            alert(`更新失敗: ${error.error || '未知錯誤'}`);
+        }
+    } catch (error) {
+        console.error('更新訂單錯誤:', error);
+        alert('更新訂單時發生錯誤，請稍後再試');
+    }
 }
 
 // 工具函數：轉義HTML
@@ -928,7 +1431,7 @@ async function loadEmployeeSales() {
             } else {
                 tableBody.innerHTML = data.map(employee => `
                     <tr>
-                        <td>${escapeHtml(employee.name || employee.username)}</td>
+                        <td>${escapeHtml(employee.name || employee.username)}${employee.role === 'admin' ? ' <span style="color: #e74c3c; font-size: 12px;">(管理員)</span>' : ''}</td>
                         <td>${escapeHtml(employee.username)}</td>
                         <td>NT$ ${employee.total_sales.toFixed(2)}</td>
                         <td>${employee.total_items_sold}</td>
@@ -1000,7 +1503,7 @@ async function loadEmployeeAverage() {
             } else {
                 tableBody.innerHTML = data.map(employee => `
                     <tr>
-                        <td>${escapeHtml(employee.name || employee.username)}</td>
+                        <td>${escapeHtml(employee.name || employee.username)}${employee.role === 'admin' ? ' <span style="color: #e74c3c; font-size: 12px;">(管理員)</span>' : ''}</td>
                         <td>${escapeHtml(employee.username)}</td>
                         <td>${employee.order_count}</td>
                         <td>NT$ ${employee.avg_order_amount.toFixed(2)}</td>
@@ -1022,6 +1525,7 @@ async function loadEmployeeAverage() {
 window.onclick = function(event) {
     const productModal = document.getElementById('productModal');
     const orderModal = document.getElementById('orderModal');
+    const editOrderModal = document.getElementById('editOrderModal');
     const loginModal = document.getElementById('loginModal');
     const registerModal = document.getElementById('registerModal');
     const adminStatsModal = document.getElementById('adminStatsModal');
@@ -1032,6 +1536,9 @@ window.onclick = function(event) {
     }
     if (event.target === orderModal) {
         closeOrderModal();
+    }
+    if (event.target === editOrderModal) {
+        closeEditOrderModal();
     }
     if (event.target === loginModal) {
         closeLoginModal();

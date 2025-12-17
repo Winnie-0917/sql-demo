@@ -110,6 +110,33 @@
         </div>
     </div>
 
+    <!-- 編輯訂單模態框 -->
+    <div id="editOrderModal" class="modal">
+        <div class="modal-content large-modal">
+            <span class="close" onclick="closeEditOrderModal()">&times;</span>
+            <h2>編輯訂單</h2>
+            <form id="editOrderForm">
+                <input type="hidden" id="editOrderId">
+                <div class="form-group">
+                    <label>訂單編號:</label>
+                    <input type="text" id="editOrderNumber" readonly>
+                </div>
+                <div class="form-group">
+                    <label>訂單日期:</label>
+                    <input type="text" id="editOrderDate" readonly>
+                </div>
+                <div class="form-group">
+                    <label>訂單商品:</label>
+                    <div id="editOrderItems"></div>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">儲存變更</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeEditOrderModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- 登入模態框 -->
     <div id="loginModal" class="modal">
         <div class="modal-content">

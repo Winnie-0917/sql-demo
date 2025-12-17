@@ -9,6 +9,10 @@ import secrets
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = secrets.token_hex(16)  # 用於session管理
+# 配置 session cookie
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # 開發環境設為 False，生產環境應設為 True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
 CORS(app, supports_credentials=True)  # 允許跨域請求並支持憑證
 
 # 資料庫配置（XAMPP預設設定）
@@ -16,7 +20,7 @@ DB_CONFIG = {
     'host': 'localhost',
     'user': 'root',
     'password': '',  # XAMPP預設密碼為空
-    'database': 'pos_system',
+    'database': 'pos_system',  # 資料庫名稱：POS收銀系統資料庫
     'charset': 'utf8mb4'
 }
 
@@ -44,59 +48,59 @@ def init_database():
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
         cursor.execute(f"USE {DB_CONFIG['database']}")
         
-        # 創建用戶表
+        # 創建用戶表（系統使用者資料表）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(50) NOT NULL UNIQUE,
-                password VARCHAR(255) NOT NULL,
-                name VARCHAR(100),
-                role VARCHAR(20) DEFAULT 'user',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                id INT AUTO_INCREMENT PRIMARY KEY COMMENT '使用者唯一識別碼',
+                username VARCHAR(50) NOT NULL UNIQUE COMMENT '使用者登入帳號（唯一）',
+                password VARCHAR(255) NOT NULL COMMENT '使用者密碼（SHA256雜湊值）',
+                name VARCHAR(100) COMMENT '使用者真實姓名',
+                role VARCHAR(20) DEFAULT 'user' COMMENT '使用者角色：user（一般用戶）或 admin（管理員）',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '帳號建立時間',
                 INDEX idx_username (username)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系統使用者資料表'
         """)
 
-        # 創建商品表
+        # 創建商品表（商品資料表）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS products (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
-                stock INT NOT NULL DEFAULT 0,
-                description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                id INT AUTO_INCREMENT PRIMARY KEY COMMENT '商品唯一識別碼',
+                name VARCHAR(255) NOT NULL COMMENT '商品名稱',
+                price DECIMAL(10, 2) NOT NULL COMMENT '商品單價（新台幣）',
+                stock INT NOT NULL DEFAULT 0 COMMENT '商品庫存數量',
+                description TEXT COMMENT '商品詳細描述',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '商品建立時間',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '商品最後更新時間'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品資料表'
         """)
         
-        # 創建訂單表
+        # 創建訂單表（訂單主檔）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS orders (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT,
-                subtotal DECIMAL(10, 2) NOT NULL,
-                tax DECIMAL(10, 2) NOT NULL,
-                total DECIMAL(10, 2) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                id INT AUTO_INCREMENT PRIMARY KEY COMMENT '訂單唯一識別碼（訂單編號）',
+                user_id INT COMMENT '下單使用者ID（關聯到users表）',
+                subtotal DECIMAL(10, 2) NOT NULL COMMENT '訂單小計金額（未含稅）',
+                tax DECIMAL(10, 2) NOT NULL COMMENT '訂單稅額（營業稅5%）',
+                total DECIMAL(10, 2) NOT NULL COMMENT '訂單總金額（含稅）',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '訂單建立時間',
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
                 INDEX idx_user_id (user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='訂單主檔資料表'
         """)
         
-        # 創建訂單項目表
+        # 創建訂單項目表（訂單明細檔）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS order_items (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                order_id INT NOT NULL,
-                product_id INT NOT NULL,
-                quantity INT NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY COMMENT '訂單項目唯一識別碼',
+                order_id INT NOT NULL COMMENT '所屬訂單ID（關聯到orders表）',
+                product_id INT NOT NULL COMMENT '商品ID（關聯到products表）',
+                quantity INT NOT NULL COMMENT '購買數量',
+                price DECIMAL(10, 2) NOT NULL COMMENT '購買時的商品單價（保留歷史價格）',
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
                 FOREIGN KEY (product_id) REFERENCES products(id),
                 INDEX idx_order_id (order_id),
                 INDEX idx_product_id (product_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='訂單明細檔資料表'
         """)
         
         
@@ -105,7 +109,7 @@ def init_database():
         cursor.close()
         connection.close()
         
-        # 資料庫遷移：更新現有表結構
+        # 資料庫遷移：更新現有表結構和註釋
         connection = get_db_connection()
         if connection:
             cursor = connection.cursor()
@@ -169,6 +173,56 @@ def init_database():
             
             cursor.close()
             connection.close()
+        
+        # 更新現有表的註釋（如果表已存在）
+        connection = get_db_connection()
+        if connection:
+            cursor = connection.cursor()
+            try:
+                # 更新 users 表註釋
+                cursor.execute("ALTER TABLE users COMMENT='系統使用者資料表'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY COMMENT '使用者唯一識別碼'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN username VARCHAR(50) NOT NULL UNIQUE COMMENT '使用者登入帳號（唯一）'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL COMMENT '使用者密碼（SHA256雜湊值）'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN name VARCHAR(100) COMMENT '使用者真實姓名'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN role VARCHAR(20) DEFAULT 'user' COMMENT '使用者角色：user（一般用戶）或 admin（管理員）'")
+                cursor.execute("ALTER TABLE users MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '帳號建立時間'")
+                
+                # 更新 products 表註釋
+                cursor.execute("ALTER TABLE products COMMENT='商品資料表'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY COMMENT '商品唯一識別碼'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN name VARCHAR(255) NOT NULL COMMENT '商品名稱'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN price DECIMAL(10, 2) NOT NULL COMMENT '商品單價（新台幣）'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN stock INT NOT NULL DEFAULT 0 COMMENT '商品庫存數量'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN description TEXT COMMENT '商品詳細描述'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '商品建立時間'")
+                cursor.execute("ALTER TABLE products MODIFY COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '商品最後更新時間'")
+                
+                # 更新 orders 表註釋
+                cursor.execute("ALTER TABLE orders COMMENT='訂單主檔資料表'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY COMMENT '訂單唯一識別碼（訂單編號）'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN user_id INT COMMENT '下單使用者ID（關聯到users表）'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN subtotal DECIMAL(10, 2) NOT NULL COMMENT '訂單小計金額（未含稅）'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN tax DECIMAL(10, 2) NOT NULL COMMENT '訂單稅額（營業稅5%）'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN total DECIMAL(10, 2) NOT NULL COMMENT '訂單總金額（含稅）'")
+                cursor.execute("ALTER TABLE orders MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '訂單建立時間'")
+                
+                # 更新 order_items 表註釋
+                cursor.execute("ALTER TABLE order_items COMMENT='訂單明細檔資料表'")
+                cursor.execute("ALTER TABLE order_items MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY COMMENT '訂單項目唯一識別碼'")
+                cursor.execute("ALTER TABLE order_items MODIFY COLUMN order_id INT NOT NULL COMMENT '所屬訂單ID（關聯到orders表）'")
+                cursor.execute("ALTER TABLE order_items MODIFY COLUMN product_id INT NOT NULL COMMENT '商品ID（關聯到products表）'")
+                cursor.execute("ALTER TABLE order_items MODIFY COLUMN quantity INT NOT NULL COMMENT '購買數量'")
+                cursor.execute("ALTER TABLE order_items MODIFY COLUMN price DECIMAL(10, 2) NOT NULL COMMENT '購買時的商品單價（保留歷史價格）'")
+                
+                connection.commit()
+                print("資料表註釋更新成功！")
+            except Error as e:
+                # 如果更新註釋失敗（可能是因為表結構不同），只記錄但不中斷
+                print(f"更新表註釋時發生錯誤（不影響功能）: {e}")
+            finally:
+                cursor.close()
+                connection.close()
         
         # 插入一些範例商品和默認用戶（如果表格是空的）
         connection = get_db_connection()
@@ -795,6 +849,182 @@ def get_orders():
     except Error as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/orders/<int:order_id>', methods=['DELETE'])
+def delete_order(order_id):
+    """刪除訂單"""
+    # 檢查登入狀態
+    if not check_login():
+        return jsonify({'error': '請先登入'}), 401
+    
+    user_id = session.get('user_id')
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        # 設置為手動提交模式
+        connection.autocommit = False
+        cursor = connection.cursor(dictionary=True)
+        
+        # 檢查訂單是否存在且屬於當前用戶
+        cursor.execute("SELECT * FROM orders WHERE id = %s AND user_id = %s", (order_id, user_id))
+        order = cursor.fetchone()
+        
+        if not order:
+            cursor.close()
+            connection.close()
+            return jsonify({'error': '訂單不存在或無權限'}), 404
+        
+        # 獲取訂單項目以恢復庫存
+        cursor.execute("""
+            SELECT product_id, quantity 
+            FROM order_items 
+            WHERE order_id = %s
+        """, (order_id,))
+        order_items = cursor.fetchall()
+        
+        # 恢復商品庫存
+        for item in order_items:
+            cursor.execute("""
+                UPDATE products 
+                SET stock = stock + %s 
+                WHERE id = %s
+            """, (item['quantity'], item['product_id']))
+        
+        # 刪除訂單項目（外鍵約束會自動處理）
+        cursor.execute("DELETE FROM order_items WHERE order_id = %s", (order_id,))
+        
+        # 刪除訂單
+        cursor.execute("DELETE FROM orders WHERE id = %s", (order_id,))
+        
+        # 提交事務
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        return jsonify({'message': '訂單刪除成功'})
+    except Error as e:
+        # 如果發生錯誤，回滾事務
+        if connection:
+            connection.rollback()
+            cursor.close()
+            connection.close()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/orders/<int:order_id>', methods=['PUT'])
+def update_order(order_id):
+    """更新訂單"""
+    # 檢查登入狀態
+    if not check_login():
+        return jsonify({'error': '請先登入'}), 401
+    
+    user_id = session.get('user_id')
+    data = request.json
+    
+    if not data or not data.get('items'):
+        return jsonify({'error': '缺少訂單項目'}), 400
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': '資料庫連接失敗'}), 500
+    
+    try:
+        # 設置為手動提交模式
+        connection.autocommit = False
+        cursor = connection.cursor(dictionary=True)
+        
+        # 檢查訂單是否存在且屬於當前用戶
+        cursor.execute("SELECT * FROM orders WHERE id = %s AND user_id = %s", (order_id, user_id))
+        order = cursor.fetchone()
+        
+        if not order:
+            cursor.close()
+            connection.close()
+            return jsonify({'error': '訂單不存在或無權限'}), 404
+        
+        # 獲取原訂單項目以恢復庫存
+        cursor.execute("""
+            SELECT product_id, quantity 
+            FROM order_items 
+            WHERE order_id = %s
+        """, (order_id,))
+        old_order_items = cursor.fetchall()
+        
+        # 恢復原商品庫存
+        for item in old_order_items:
+            cursor.execute("""
+                UPDATE products 
+                SET stock = stock + %s 
+                WHERE id = %s
+            """, (item['quantity'], item['product_id']))
+        
+        # 檢查新庫存並更新
+        for item in data['items']:
+            product_id = item['product_id']
+            quantity = item['quantity']
+            
+            cursor.execute("SELECT stock FROM products WHERE id = %s", (product_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                connection.rollback()
+                cursor.close()
+                connection.close()
+                return jsonify({'error': f'商品 ID {product_id} 不存在'}), 400
+            
+            current_stock = result['stock']
+            if current_stock < quantity:
+                connection.rollback()
+                cursor.close()
+                connection.close()
+                return jsonify({'error': f'商品 ID {product_id} 庫存不足'}), 400
+            
+            # 更新庫存
+            cursor.execute("""
+                UPDATE products SET stock = stock - %s WHERE id = %s
+            """, (quantity, product_id))
+        
+        # 刪除舊的訂單項目
+        cursor.execute("DELETE FROM order_items WHERE order_id = %s", (order_id,))
+        
+        # 創建新的訂單項目
+        for item in data['items']:
+            cursor.execute("""
+                INSERT INTO order_items (order_id, product_id, quantity, price)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                order_id,
+                item['product_id'],
+                item['quantity'],
+                item['price']
+            ))
+        
+        # 更新訂單總額
+        subtotal = data.get('subtotal', sum(item['price'] * item['quantity'] for item in data['items']))
+        tax = data.get('tax', subtotal * 0.05)
+        total = data.get('total', subtotal + tax)
+        
+        cursor.execute("""
+            UPDATE orders 
+            SET subtotal = %s, tax = %s, total = %s
+            WHERE id = %s
+        """, (subtotal, tax, total, order_id))
+        
+        # 提交事務
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        return jsonify({'message': '訂單更新成功'})
+    except Error as e:
+        # 如果發生錯誤，回滾事務
+        if connection:
+            connection.rollback()
+            cursor.close()
+            connection.close()
+        return jsonify({'error': str(e)}), 500
+
 # 管理員統計API
 
 @app.route('/api/admin/stats/employee-sales', methods=['GET'])
@@ -810,19 +1040,20 @@ def get_employee_sales():
     try:
         cursor = connection.cursor(dictionary=True)
         
-        # 查詢每位員工的銷售數量（總金額和商品數量）
+        # 查詢每位員工的銷售數量（總金額和商品數量），包含管理員（如果有訂單）
         cursor.execute("""
             SELECT 
                 u.id,
                 u.username,
                 u.name,
+                u.role,
                 COALESCE(SUM(o.total), 0) as total_sales,
                 COALESCE(SUM(oi.quantity), 0) as total_items_sold
             FROM users u
             LEFT JOIN orders o ON u.id = o.user_id
             LEFT JOIN order_items oi ON o.id = oi.order_id
-            WHERE u.role = 'user'
-            GROUP BY u.id, u.username, u.name
+            WHERE u.role = 'user' OR (u.role = 'admin' AND EXISTS(SELECT 1 FROM orders WHERE user_id = u.id))
+            GROUP BY u.id, u.username, u.name, u.role
             ORDER BY total_sales DESC
         """)
         
@@ -895,12 +1126,13 @@ def get_employee_average():
     try:
         cursor = connection.cursor(dictionary=True)
         
-        # 查詢每位員工的平均銷售數量（平均訂單金額、平均訂單商品數量）
+        # 查詢每位員工的平均銷售數量（平均訂單金額、平均訂單商品數量），包含管理員（如果有訂單）
         cursor.execute("""
             SELECT 
                 u.id,
                 u.username,
                 u.name,
+                u.role,
                 COUNT(o.id) as order_count,
                 CASE 
                     WHEN COUNT(o.id) > 0 THEN COALESCE(AVG(o.total), 0)
@@ -917,8 +1149,8 @@ def get_employee_average():
                 FROM order_items
                 GROUP BY order_id
             ) order_item_count ON o.id = order_item_count.order_id
-            WHERE u.role = 'user'
-            GROUP BY u.id, u.username, u.name
+            WHERE u.role = 'user' OR (u.role = 'admin' AND EXISTS(SELECT 1 FROM orders WHERE user_id = u.id))
+            GROUP BY u.id, u.username, u.name, u.role
             ORDER BY avg_order_amount DESC
         """)
         
