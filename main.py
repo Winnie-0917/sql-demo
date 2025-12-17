@@ -2,8 +2,6 @@ from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
 import mysql.connector
 from mysql.connector import Error
-from datetime import datetime
-import os
 import hashlib
 import secrets
 
@@ -1181,7 +1179,6 @@ if __name__ == '__main__':
         print("=" * 50)
         print("POS系統已啟動！")
         print("請在瀏覽器中訪問: http://localhost:5000")
-        print("API服務運行在: http://localhost:5000/api")
         print("=" * 50)
         app.run(debug=True, host='0.0.0.0', port=5000)
     else:
